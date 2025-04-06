@@ -1,70 +1,89 @@
 from flask import Flask, render_template, request, redirect, url_for
+from colorthief import ColorThief
+import openai
 import os
 import uuid
 from werkzeug.utils import secure_filename
-from openai import OpenAI
 
 app = Flask(__name__)
+UPLOAD_FOLDER = 'static/uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# OpenAIクライアントを初期化（環境変数 OPENAI_API_KEY が必要）
-client = OpenAI()
+# ✅ 色取得（Colorthief）
+def get_dominant_color(image_path):
+    color_thief = ColorThief(image_path)
+    return color_thief.get_color(quality=1)
 
-# HTMLを自動生成する関数
-def generate_custom_html(filename):
+# ✅ OpenAIでHTML生成（画像の雰囲気を元に）
+def generate_html_from_mood(mood, bg_color):
+    openai.api_key = os.environ.get("OPENAI_API_KEY")
+
     prompt = f"""
-    このキャラクター画像のファイル名「{filename}」から、以下の特徴を想像して日本語で簡潔に教えてください。
+画像の雰囲気が「{mood}」で、背景色はRGB({bg_color[0]}, {bg_color[1]}, {bg_color[2]})です。
+この情報をもとに、キャラクター紹介用の HTML + CSS を生成してください。
 
-    🎨 色合い（例：パステル・ビビッド）
-    😌 雰囲気（例：キュート・クール・優しい）
-    🧁 テイスト（例：レトロ・未来感・和風）
-    ✍️ タイポ（フォントの印象）
-    💡 コンセプト（世界観・言葉）
+- 見出し（h1）と、かわいい or クール or 和風などに合った雰囲気の、スクエア構成を基本にしたレイアウト
+- ユーザーがアップした画像（URL: static/uploads/〇〇.jpg）を使う前提で、imgタグを含めてください。
+- HTML全体を、出力してください。
+- 画像ファイル名は {{filename}} に置き換えてください（後で挿入されます）
+- 日本語で生成してください。
+"""
 
-    そしてその特徴をもとに、キャラに似合うWebページのHTMLコード（日本語・スタイル付き）を作ってください。
-    """
-
-    response = client.chat.completions.create(
+    response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
+        max_tokens=1000
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message["content"]
 
-# トップページ：アップロードフォーム表示
+# ✅ ルート（index）
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# アップロード処理
+# ✅ アップロード処理
 @app.route('/upload', methods=['POST'])
 def upload():
-    if 'file' not in request.files:
-        return "ファイルが送信されていません", 400
+    if 'file' not in request.files or 'mood' not in request.form:
+        return "ファイルまたは雰囲気の入力がありません", 400
 
     file = request.files['file']
+    mood = request.form['mood']
+
     if file.filename == '':
         return "ファイル名が空です", 400
 
-    # 保存先とユニークファイル名の生成
+    # ランダムファイル名に変換
     ext = os.path.splitext(file.filename)[1]
     unique_filename = secure_filename(str(uuid.uuid4()) + ext)
-    upload_path = os.path.join('static/uploads', unique_filename)
-    file.save(upload_path)
+    filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
+    file.save(filepath)
 
-    # OpenAIでHTML生成
-    html_code = generate_custom_html(unique_filename)
+    # 背景色取得
+    bg_color = get_dominant_color(filepath)
 
-    # ユーザーごとのHTMLを保存
-    output_filename = f"{uuid.uuid4().hex}.html"
-    output_path = os.path.join('static/generated', output_filename)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html_code)
+    # OpenAIにHTML+CSSを生成してもらう
+    html_template = generate_html_from_mood(mood, bg_color)
 
-    # 完成したページへリダイレクト
-    return redirect(url_for('static', filename=f'generated/{output_filename}'))
+    # {{filename}} を画像名に置き換え
+    final_html = html_template.replace("{{filename}}", unique_filename)
 
-# ポート指定（Render用）
+    # 出力ファイル保存
+    output_path = os.path.join("static/generated", unique_filename + ".html")
+    os.makedirs("static/generated", exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(final_html)
+
+    return redirect(url_for('show_page', filename=unique_filename + ".html"))
+
+# ✅ 作成されたHTMLを表示
+@app.route('/page/<filename>')
+def show_page(filename):
+    return redirect(url_for('static', filename=f"generated/{filename}"))
+
+# ✅ Renderポート設定
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)
