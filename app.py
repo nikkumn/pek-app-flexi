@@ -1,47 +1,42 @@
 from flask import Flask, render_template, request, redirect, url_for
-from werkzeug.utils import secure_filename
-import openai
 import os
 import uuid
+from werkzeug.utils import secure_filename
+from openai import OpenAI
 
 app = Flask(__name__)
 
-# ✅ HTML＋CSS自動生成
+# OpenAIクライアントを初期化（環境変数 OPENAI_API_KEY が必要）
+client = OpenAI()
+
+# HTMLを自動生成する関数
 def generate_custom_html(filename):
-    openai.api_key = os.environ.get("OPENAI_API_KEY")
-
     prompt = f"""
-キャラクター画像「{filename}」から想像して、
-その雰囲気・世界観・性格に合った1ページのWebページ（HTML＋CSS）を日本語で生成してください。
+    このキャラクター画像のファイル名「{filename}」から、以下の特徴を想像して日本語で簡潔に教えてください。
 
-- フォントや色、背景、レイアウトもその世界観に合うように。
-- アップロード画像（static/uploads/{filename}）を必ず表示。
-- 完成したHTMLをそのまま表示できる形で返してください。
-"""
+    🎨 色合い（例：パステル・ビビッド）
+    😌 雰囲気（例：キュート・クール・優しい）
+    🧁 テイスト（例：レトロ・未来感・和風）
+    ✍️ タイポ（フォントの印象）
+    💡 コンセプト（世界観・言葉）
 
-    response = openai.ChatCompletion.create(
+    そしてその特徴をもとに、キャラに似合うWebページのHTMLコード（日本語・スタイル付き）を作ってください。
+    """
+
+    response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.9,
-        max_tokens=1800
+        temperature=0.7,
     )
 
-    html_code = response.choices[0].message["content"]
+    return response.choices[0].message.content
 
-    # 一意なファイル名で保存
-    unique_id = str(uuid.uuid4())
-    result_path = f"templates/generated_{unique_id}.html"
-    with open(result_path, "w", encoding="utf-8") as f:
-        f.write(html_code)
-
-    return f"generated_{unique_id}.html"
-
-# ✅ フォーム画面
+# トップページ：アップロードフォーム表示
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# ✅ アップロード＆生成
+# アップロード処理
 @app.route('/upload', methods=['POST'])
 def upload():
     if 'file' not in request.files:
@@ -51,21 +46,25 @@ def upload():
     if file.filename == '':
         return "ファイル名が空です", 400
 
+    # 保存先とユニークファイル名の生成
     ext = os.path.splitext(file.filename)[1]
     unique_filename = secure_filename(str(uuid.uuid4()) + ext)
-    filepath = os.path.join('static/uploads', unique_filename)
-    file.save(filepath)
+    upload_path = os.path.join('static/uploads', unique_filename)
+    file.save(upload_path)
 
-    html_file = generate_custom_html(unique_filename)
+    # OpenAIでHTML生成
+    html_code = generate_custom_html(unique_filename)
 
-    return redirect(url_for('render_generated', page=html_file))
+    # ユーザーごとのHTMLを保存
+    output_filename = f"{uuid.uuid4().hex}.html"
+    output_path = os.path.join('static/generated', output_filename)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_code)
 
-# ✅ 自動生成HTMLの表示
-@app.route('/generated/<page>')
-def render_generated(page):
-    return render_template(page)
+    # 完成したページへリダイレクト
+    return redirect(url_for('static', filename=f'generated/{output_filename}'))
 
-# ✅ Render用ポート設定
+# ポート指定（Render用）
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
