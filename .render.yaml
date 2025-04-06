@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: pek-app
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false  # Renderのダッシュボードで手動で入力
+    autoDeploy: true
