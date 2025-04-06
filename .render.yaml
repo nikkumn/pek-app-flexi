@@ -7,4 +7,3 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false  # Renderのダッシュボードで手動で入力
-    autoDeploy: true
