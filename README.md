@@ -1,1 +1,1 @@
-# pek-app-flexy
+# pek-app-flexi
